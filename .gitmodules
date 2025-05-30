@@ -1,0 +1,4 @@
+[submodule "deps/Voicemeeter-SDK"]
+	path = deps/Voicemeeter-SDK
+	url = https://github.com/vburel2018/Voicemeeter-SDK.git
+	branch = main
