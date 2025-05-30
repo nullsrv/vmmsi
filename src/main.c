@@ -1,8 +1,11 @@
+#include <mni/mni.h>
 #include <VoicemeeterRemote.h>
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 
+#include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 #include <wchar.h>
 
@@ -308,12 +311,234 @@ BOOL VMR_End(HWND hWnd) {
 
 #pragma endregion
 
-int main(int argc, char* argv[]) {
-    if (!VMR_Init(NULL)) {
+#define VMMSI_MENU_MIC_ID               1000
+#define VMMSI_MENU_MUTE_UNMUTE          1001
+#define VMMSI_MENU_ABOUT                1002
+#define VMMSI_MENU_EXIT                 1003
+
+#define VMMSI_TIMER_REFRESH_VOICEMEETER_STATE   MNI_USER_TIMER_ID
+
+typedef struct VMMicStatusIndicator {
+    int     stripe_id;
+    int     mic_state;
+    char    stripe_str[16];
+    bool    is_connected;
+
+    HICON   mic_muted_light;
+    HICON   mic_muted_dark;
+    HICON   mic_unmuted_light;
+    HICON   mic_unmuted_dark;
+} VMMicStatusIndicator;
+
+
+static BOOL _IsColorLight(DWORD color) {
+    BYTE r = GetRValue(color);
+    BYTE g = GetGValue(color);
+    BYTE b = GetBValue(color);
+
+    return (((5 * g) + (2 * r) + b) > (8 * 128));
+}
+
+static HICON _LoadIcon(MniThemeInfo mti, int dpi, bool mute) {
+    BOOL use_light_icon = TRUE;
+    if (mti.theme == MNI_THEME_LIGHT) {
+         use_light_icon = FALSE;
+    } else {
+        if (mti.theme == MNI_THEME_HIGHCONTRAST && !_IsColorLight(mti.text_color)) {
+            use_light_icon = FALSE;
+        }
+    }
+
+    const wchar_t *path = use_light_icon 
+        ? (mute ? L"icons/mic_muted_light.ico" : L"icons/mic_unmuted_light.ico")
+        : (mute ? L"icons/mic_muted_dark.ico" : L"icons/mic_unmuted_dark.ico");
+    const int size = MulDiv(16, dpi, 96);
+
+    return (HICON)LoadImageW(0, path, IMAGE_ICON, size, size, LR_LOADFROMFILE);// | LR_DEFAULTSIZE);
+}
+
+void VMMSI_OnInit(Mni4 *mni) {
+    VMMicStatusIndicator *vmmsi = NULL;
+    if (MNI_FAILED(MniGetUserData1(mni, &vmmsi))) {
+        return;
+    }
+
+    memset(vmmsi->stripe_str, 0, sizeof(vmmsi->stripe_str));
+    sprintf_s(vmmsi->stripe_str, ARRAYSIZE(vmmsi->stripe_str), "Stripe[%d].Mute", vmmsi->stripe_id);
+    
+    HICON ico = _LoadIcon(mni->system_theme, mni->dpi, MNI_FALSE);
+    MniSetIcon(mni, ico, MNI_FALSE);
+
+    MniSetTip(mni, L"Voicemeeter Mic Status Indicator");
+}
+
+void VMMSI_OnRelease(Mni4 *mni) {
+    VMMicStatusIndicator *vmmsi = NULL;
+    if (MNI_FAILED(MniGetUserData1(mni, &vmmsi))) {
+        return;
+    }
+}
+
+void VMMSI_OnLmbClick(Mni4 *mni, int x, int y) {
+    VMMicStatusIndicator *vmmsi = NULL;
+    if (MNI_FAILED(MniGetUserData1(mni, &vmmsi))) {
+        return;
+    }
+}
+
+void VMMSI_OnTaskbarCreated(Mni4 *mni) {
+    MniShow(mni, MNI_TRUE);
+}
+
+void VMMSI_OnDpiChange(Mni4 *mni, int dpi) {
+    VMMicStatusIndicator *vmmsi = NULL;
+    if (MNI_FAILED(MniGetUserData1(mni, &vmmsi))) {
+        return;
+    }
+
+    HICON ico = _LoadIcon(mni->system_theme, dpi, vmmsi->mic_state);
+    MniSetIcon(mni, ico, MNI_TRUE);
+}
+
+void VMMSI_OnSystemThemeChange(Mni4 *mni, MniThemeInfo mti) {
+    VMMicStatusIndicator *vmmsi = NULL;
+    if (MNI_FAILED(MniGetUserData1(mni, &vmmsi))) {
+        return;
+    }
+
+    HICON ico = _LoadIcon(mti, mni->dpi, vmmsi->mic_state);
+    MniSetIcon(mni, ico, TRUE);
+}
+
+void VMMSI_OnTimer(Mni4 *mni, unsigned int timer_id) {
+    VMMicStatusIndicator *vmmsi = NULL;
+    if (MNI_FAILED(MniGetUserData1(mni, &vmmsi))) {
+        return;
+    }
+
+    int is_dirty = iVMR.VBVMR_IsParametersDirty();
+    if (is_dirty < 0) {
+        vmmsi->is_connected = false;
+    } else if (is_dirty > 0) {
+        vmmsi->is_connected = true;
+
+        float fmute = 0.0f;
+        iVMR.VBVMR_GetParameterFloat(vmmsi->stripe_str, &fmute);
+        vmmsi->mic_state = (fmute != 0.0f) ? 1 : 0;
+        
+        HICON ico = _LoadIcon(mni->system_theme, mni->dpi, vmmsi->mic_state);
+        MniSetIcon(mni, ico, TRUE);
+
+        wchar_t buf[32];
+        memset(buf, 0, sizeof(buf));
+        swprintf_s(
+            buf,
+            ARRAYSIZE(buf),
+            L"Mic #%d - %s", vmmsi->stripe_id, vmmsi->mic_state ? L"Muted" : L"Unmuted"
+        );
+        MniSetTip(mni, buf);
+    }
+}
+
+void VMMSI_OnContextMenuOpen(Mni4 *mni) {
+    VMMicStatusIndicator *vmmsi = NULL;
+    if (MNI_FAILED(MniGetUserData1(mni, &vmmsi))) {
+        return;
+    }
+
+    // Create menus.
+    HMENU menu = CreateMenu();
+    HMENU popup = CreateMenu();
+    
+    //wchar_t mic_id_str[8];
+    //memset(mic_id_str, 0, sizeof(mic_id_str));
+    //swprintf_s(mic_id_str, ARRAYSIZE(mic_id_str), L"Mic #%d", vmmsi->stripe_id);
+
+    //AppendMenuW(menu, MF_STRING | MF_DISABLED, VMMSI_MENU_MIC_ID, mic_id_str);
+    //SetMenuItemBitmaps(menu, VMMSI_MENU_MIC_ID, )
+
+    AppendMenuW(menu, MF_STRING, VMMSI_MENU_MUTE_UNMUTE, vmmsi->mic_state ? L"Unmute" : L"Mute");
+    AppendMenuW(menu, MF_STRING, VMMSI_MENU_ABOUT, L"About");
+    AppendMenuW(menu, MF_STRING, VMMSI_MENU_EXIT, L"Exit");
+    AppendMenuW(popup, MF_POPUP, (UINT_PTR)menu, L"");
+
+    MniSetMenu(mni, popup, MNI_TRUE);
+}
+
+void VMMSI_OnContextMenuClick(Mni4 *mni, int selected_item) {
+    VMMicStatusIndicator *vmmsi = NULL;
+    if (MNI_FAILED(MniGetUserData1(mni, &vmmsi))) {
+        return;
+    }
+
+    switch (selected_item) {
+        case VMMSI_MENU_MUTE_UNMUTE:
+            iVMR.VBVMR_SetParameterFloat(vmmsi->stripe_str, (vmmsi->mic_state != 0) ? 0.0f : 1.0f);
+            vmmsi->mic_state = !vmmsi->mic_state;
+            break;
+        case VMMSI_MENU_ABOUT:
+            
+            break;
+        case VMMSI_MENU_EXIT:
+            MniQuit();
+            break;
+    }
+}
+
+int WINAPI wWinMain(
+    _In_     HINSTANCE hInstance,
+    _In_opt_ HINSTANCE hPrevInstance,
+    _In_     LPWSTR    lpCmdLine,
+    _In_     int       nShowCmd
+) {
+    UNREFERENCED_PARAMETER(hPrevInstance);
+    UNREFERENCED_PARAMETER(lpCmdLine);
+    UNREFERENCED_PARAMETER(nShowCmd);
+
+    VMMicStatusIndicator vmmsi;
+    memset(&vmmsi, 0, sizeof(vmmsi));
+
+    // Setup MniInfo.
+    MniInfo info;
+    memset(&info, 0, sizeof(info));
+
+    info.user_data1 = (void *)&vmmsi;
+    info.on_init = VMMSI_OnInit;
+    info.on_release = VMMSI_OnRelease;
+    info.on_taskbar_created = VMMSI_OnTaskbarCreated;
+    info.on_dpi_change = VMMSI_OnDpiChange;
+    info.on_system_theme_change = VMMSI_OnSystemThemeChange;
+    info.on_context_menu_item_click = VMMSI_OnContextMenuClick;
+    info.on_context_menu_open = VMMSI_OnContextMenuOpen;
+    info.on_timer = VMMSI_OnTimer;
+    info.on_lmb_click = VMMSI_OnLmbClick;
+
+    // Init tray icon.
+    Mni4 mni;
+    if (MNI_FAILED(MniInit(&mni, info)))
+    {
+        MessageBoxW(NULL, L"Failed to initialize Mni!", L"Error", MB_OK);
         return -1;
     }
 
-    VMR_End(NULL);
+    // Show the icon in Notification Area.
+    if (MNI_FAILED(MniShow(&mni, MNI_FALSE)))
+    {
+        MessageBoxW(NULL, L"Failed to show tray icon!", L"Error", MB_OK);
+        return -2;
+    }
+    
+    if (!VMR_Init(NULL)) {
+        MniRelease(&mni, MNI_TRUE, MNI_TRUE);
+        return -3;
+    }
 
-    return 0;
+    MniStartTimer(&mni, VMMSI_TIMER_REFRESH_VOICEMEETER_STATE, 500);
+
+    int r = MniRunMessageLoop();
+
+    VMR_End(NULL);
+    MniRelease(&mni, MNI_TRUE, MNI_TRUE);
+
+    return r;
 }
