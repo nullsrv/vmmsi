@@ -2,3 +2,7 @@
 	path = deps/Voicemeeter-SDK
 	url = https://github.com/vburel2018/Voicemeeter-SDK.git
 	branch = main
+[submodule "deps/mni"]
+	path = deps/mni
+	url = https://github.com/nullsrv/mni.git
+	branch = devel
