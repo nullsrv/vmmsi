@@ -2,12 +2,13 @@
 // Microsoft Visual C++ generated include file.
 // Used by vmmsi.rc
 //
-
 #define IDI_PROGRAM_ICON                200
 #define IDI_DEFAULT_LIGHT_MIC_MUTED     201
 #define IDI_DEFAULT_LIGHT_MIC_UNMUTED   202
-#define IDI_DEFAULT_DARK_MIC_MUTED      203
-#define IDI_DEFAULT_DARK_MIC_UNMUTED    204
+#define IDI_DEFAULT_LIGHT_MIC_ACTIVE    203
+#define IDI_DEFAULT_DARK_MIC_MUTED      204
+#define IDI_DEFAULT_DARK_MIC_UNMUTED    205
+#define IDI_DEFAULT_DARK_MIC_ACTIVE     206
 
 // Next default values for new objects
 // 

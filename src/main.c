@@ -9,6 +9,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
 
@@ -319,18 +320,30 @@ BOOL VMR_End(HWND hWnd) {
 #define VMMSI_MENU_ABOUT                1002
 #define VMMSI_MENU_EXIT                 1003
 
-#define VMMSI_TIMER_REFRESH_VOICEMEETER_STATE   MNI_USER_TIMER_ID
+#define VMMSI_TIMER_REFRESH_VOICEMEETER_STATE       MNI_USER_TIMER_ID
+#define VMMSI_TIMER_REFRESH_VOICEMEETER_INTERVAL    50
+
+enum {
+    VMMSI_MIC_STATE_UNMUTED = 0,
+    VMMSI_MIC_STATE_MUTED   = 1,
+    VMMSI_MIC_STATE_ACTIVE  = 2,
+};
 
 typedef struct VMMicStatusIndicator {
-    int     stripe_id;
-    int     mic_state;
-    char    stripe_str[16];
-    bool    is_connected;
-
-    HICON   mic_muted_light;
-    HICON   mic_muted_dark;
-    HICON   mic_unmuted_light;
-    HICON   mic_unmuted_dark;
+    int         stripe_id;
+    int         mic_state;
+    char        stripe_str[16];
+    bool        is_connected;
+    bool        mute_on_lmb;
+    float       active_threshold;
+    int         hold_interval;
+    int         activated_time;
+    bool        active_mic_checker;
+    int         timer;
+    bool        is_custom_icon;
+    HICON       mic_muted;
+    HICON       mic_unmuted;
+    HICON       mic_active;
 } VMMicStatusIndicator;
 
 
@@ -342,6 +355,96 @@ static BOOL _IsColorLight(DWORD color) {
     return (((5 * g) + (2 * r) + b) > (8 * 128));
 }
 
+static BOOL _GetExePath(HINSTANCE hInstance, wchar_t *buffer, size_t *len) {
+    #define MAX_BUFFER_LIMIT (32767)
+    
+    UNREFERENCED_PARAMETER(hInstance);
+
+    if (!buffer && !len) {
+        return FALSE;
+    }
+
+    wchar_t stack_buffer[MAX_PATH];
+    memset(stack_buffer, 0, sizeof(stack_buffer));
+    wchar_t *heap_buffer = NULL;
+
+    wchar_t *ptr = &stack_buffer[0];
+    size_t size = ARRAYSIZE(stack_buffer);
+
+    bool read_exe_path = false;
+    size_t path_len = 0;
+
+    // Get executable path.
+    while (!read_exe_path) {
+        DWORD ret = GetModuleFileName(NULL, ptr, (DWORD)size);
+
+        // Failed to read the path.
+        if (ret == 0) {
+            DWORD err = GetLastError();
+            break;
+        }
+
+        // Insufficient buffer.
+        if (ret == size) {
+            DWORD err = GetLastError();
+            if (err != ERROR_INSUFFICIENT_BUFFER) {
+                break;
+            }
+
+            // Free previous buffer.
+            if (heap_buffer) {
+                free(heap_buffer);
+            }
+
+            size = size * 2;
+            if (size > MAX_BUFFER_LIMIT) {
+                break;
+            }
+
+            // Allocate new buffer.
+            heap_buffer = malloc(size * sizeof(wchar_t));
+            if (!heap_buffer) {
+                break;
+            }
+            memset(heap_buffer, 0, size * sizeof(wchar_t));
+
+            ptr = heap_buffer;
+        } else {
+            // Success.
+            path_len = ret + 1; // including '\0'
+            read_exe_path = true;
+        }
+    }
+
+    BOOL status = FALSE;
+
+    // Failed to read the path.
+    if (!read_exe_path) {
+        status = FALSE;
+    } else {
+        if (!buffer) {
+            *len = path_len;
+            status = TRUE;
+        } else {
+            if (path_len > *len) {
+                status = FALSE;
+            } else {
+                wcsncpy_s(buffer, *len, ptr, path_len);
+                *len = path_len;
+                status = TRUE;
+            }
+        }
+    }
+
+    // Cleanup.
+    if (heap_buffer) {
+        free(heap_buffer);
+        heap_buffer = NULL;
+    }
+
+    return status;
+}
+
 static void VMMSI_RefreshIcon(Mni4 *mni, VMMicStatusIndicator *vmmsi) {
     if (!vmmsi->is_connected) {
         int wh = MulDiv(16, mni->dpi, 96);
@@ -351,24 +454,33 @@ static void VMMSI_RefreshIcon(Mni4 *mni, VMMicStatusIndicator *vmmsi) {
             IMAGE_ICON,
             wh,
             wh,
-            LR_DEFAULTSIZE
+            LR_DEFAULTCOLOR | LR_SHARED
         );
-        MniSetIcon(mni, ico, MNI_TRUE);
+        MniSetIcon(mni, ico, vmmsi->is_custom_icon ? MNI_TRUE : MNI_FALSE);
+        vmmsi->is_custom_icon = false;
     } else {
-        BOOL use_light_icon = TRUE;
+        bool use_light_icon = true;
         if (mni->system_theme.theme == MNI_THEME_LIGHT) {
-             use_light_icon = FALSE;
+             use_light_icon = false;
         } else {
             if (mni->system_theme.theme == MNI_THEME_HIGHCONTRAST && !_IsColorLight(mni->system_theme.text_color)) {
-                use_light_icon = FALSE;
+                use_light_icon = false;
             }
         }
 
         int id = 0;
         if (use_light_icon) {
-            id = vmmsi->mic_state ? IDI_DEFAULT_LIGHT_MIC_MUTED: IDI_DEFAULT_LIGHT_MIC_UNMUTED;
+            switch (vmmsi->mic_state) {
+                case VMMSI_MIC_STATE_UNMUTED: id = IDI_DEFAULT_LIGHT_MIC_UNMUTED; break;
+                case VMMSI_MIC_STATE_MUTED: id = IDI_DEFAULT_LIGHT_MIC_MUTED; break;
+                case VMMSI_MIC_STATE_ACTIVE: id = IDI_DEFAULT_LIGHT_MIC_ACTIVE; break;
+            }
         } else {
-            id = vmmsi->mic_state ? IDI_DEFAULT_DARK_MIC_MUTED: IDI_DEFAULT_DARK_MIC_UNMUTED;
+            switch (vmmsi->mic_state) {
+                case VMMSI_MIC_STATE_UNMUTED: id = IDI_DEFAULT_DARK_MIC_UNMUTED; break;
+                case VMMSI_MIC_STATE_MUTED: id = IDI_DEFAULT_DARK_MIC_MUTED; break;
+                case VMMSI_MIC_STATE_ACTIVE: id = IDI_DEFAULT_DARK_MIC_ACTIVE; break;
+            }
         }
 
         int wh = MulDiv(16, mni->dpi, 96);
@@ -378,10 +490,10 @@ static void VMMSI_RefreshIcon(Mni4 *mni, VMMicStatusIndicator *vmmsi) {
             IMAGE_ICON,
             wh,
             wh,
-            LR_DEFAULTSIZE
+            LR_DEFAULTCOLOR | LR_SHARED
         );
 
-        MniSetIcon(mni, ico, MNI_TRUE);
+        MniSetIcon(mni, ico, MNI_FALSE);
     }
 }
 
@@ -389,13 +501,16 @@ static void VMMSI_RefreshTip(Mni4 *mni, VMMicStatusIndicator *vmmsi) {
     if (!vmmsi->is_connected) {
         MniSetTip(mni, L"Voicemeeter Mic Status Indicator - Not Connected");
     } else {
+        const wchar_t *state_str = L"";
+        switch (vmmsi->mic_state) {
+            case VMMSI_MIC_STATE_UNMUTED: state_str = L"Unmuted"; break;
+            case VMMSI_MIC_STATE_MUTED: state_str = L"Muted"; break;
+            case VMMSI_MIC_STATE_ACTIVE: state_str = L"Unmuted"; break;
+        }
+
         wchar_t buf[32];
         memset(buf, 0, sizeof(buf));
-        swprintf_s(
-            buf,
-            ARRAYSIZE(buf),
-            L"Mic #%d - %s", vmmsi->stripe_id, vmmsi->mic_state ? L"Muted" : L"Unmuted"
-        );
+        swprintf_s(buf, ARRAYSIZE(buf), L"Mic #%d - %s", vmmsi->stripe_id, state_str);
         MniSetTip(mni, buf);
     }
 }
@@ -424,6 +539,20 @@ void VMMSI_OnLmbClick(Mni4 *mni, int x, int y) {
     VMMicStatusIndicator *vmmsi = NULL;
     if (MNI_FAILED(MniGetUserData1(mni, &vmmsi))) {
         return;
+    }
+
+    if (vmmsi->mute_on_lmb && vmmsi->is_connected) {
+        float fmute = 0.0f;
+        switch (vmmsi->mic_state) {
+            case VMMSI_MIC_STATE_UNMUTED:
+            case VMMSI_MIC_STATE_ACTIVE:
+                fmute = 1.0f;
+                break;
+            case VMMSI_MIC_STATE_MUTED:
+                fmute = 0.0f;
+                break;
+        }
+        iVMR.VBVMR_SetParameterFloat(vmmsi->stripe_str, fmute);
     }
 }
 
@@ -463,11 +592,33 @@ void VMMSI_OnTimer(Mni4 *mni, unsigned int timer_id) {
 
         float fmute = 0.0f;
         iVMR.VBVMR_GetParameterFloat(vmmsi->stripe_str, &fmute);
-        vmmsi->mic_state = (fmute != 0.0f) ? 1 : 0;
-        
-        VMMSI_RefreshIcon(mni, vmmsi);
-        VMMSI_RefreshTip(mni, vmmsi);
+        if (fmute != 0.0f) {
+            vmmsi->mic_state = 1;
+        } else {
+            vmmsi->mic_state = 0;
+        }
     }
+    
+    if (vmmsi->active_mic_checker && vmmsi->mic_state != 1) {
+        float flevel = 0.0f;
+        iVMR.VBVMR_GetLevel(1, 0, &flevel);
+        float dB = max(-80, min(12, 20.0f * log10f(flevel)));
+
+        if (vmmsi->active_threshold < dB) {
+            vmmsi->mic_state = 2;
+            vmmsi->activated_time = vmmsi->timer;
+        } else {
+            int delta = vmmsi->timer - vmmsi->activated_time;
+            if (delta > vmmsi->hold_interval) {
+                vmmsi->mic_state = 0;
+            }
+        }
+    }
+    
+    VMMSI_RefreshIcon(mni, vmmsi);
+    VMMSI_RefreshTip(mni, vmmsi);
+
+    vmmsi->timer += VMMSI_TIMER_REFRESH_VOICEMEETER_INTERVAL;
 }
 
 void VMMSI_OnContextMenuOpen(Mni4 *mni) {
@@ -500,14 +651,12 @@ void VMMSI_OnContextMenuClick(Mni4 *mni, int selected_item) {
     if (MNI_FAILED(MniGetUserData1(mni, &vmmsi))) {
         return;
     }
-
+    
     switch (selected_item) {
         case VMMSI_MENU_MUTE_UNMUTE:
             iVMR.VBVMR_SetParameterFloat(vmmsi->stripe_str, (vmmsi->mic_state != 0) ? 0.0f : 1.0f);
-            vmmsi->mic_state = !vmmsi->mic_state;
             break;
         case VMMSI_MENU_ABOUT:
-            
             break;
         case VMMSI_MENU_EXIT:
             MniQuit();
@@ -524,9 +673,19 @@ int WINAPI wWinMain(
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
     UNREFERENCED_PARAMETER(nShowCmd);
+    
+    wchar_t buf[1024];
+    size_t len = ARRAYSIZE(buf);
+    _GetExePath(NULL, buf, &len);
+    _RemoveNameInPath(buf);
 
     VMMicStatusIndicator vmmsi;
     memset(&vmmsi, 0, sizeof(vmmsi));
+
+    vmmsi.active_mic_checker = true;
+    vmmsi.active_threshold = -36.0f;
+    vmmsi.hold_interval = 150;
+    vmmsi.mute_on_lmb = true;
 
     // Setup MniInfo.
     MniInfo info;
@@ -563,7 +722,7 @@ int WINAPI wWinMain(
         return -3;
     }
 
-    MniStartTimer(&mni, VMMSI_TIMER_REFRESH_VOICEMEETER_STATE, 500);
+    MniStartTimer(&mni, VMMSI_TIMER_REFRESH_VOICEMEETER_STATE, VMMSI_TIMER_REFRESH_VOICEMEETER_INTERVAL);
 
     int r = MniRunMessageLoop();
 
