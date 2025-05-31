@@ -1,0 +1,21 @@
+//{{NO_DEPENDENCIES}}
+// Microsoft Visual C++ generated include file.
+// Used by vmmsi.rc
+//
+
+#define IDI_PROGRAM_ICON                200
+#define IDI_DEFAULT_LIGHT_MIC_MUTED     201
+#define IDI_DEFAULT_LIGHT_MIC_UNMUTED   202
+#define IDI_DEFAULT_DARK_MIC_MUTED      203
+#define IDI_DEFAULT_DARK_MIC_UNMUTED    204
+
+// Next default values for new objects
+// 
+#ifdef APSTUDIO_INVOKED
+#ifndef APSTUDIO_READONLY_SYMBOLS
+#define _APS_NEXT_RESOURCE_VALUE        102
+#define _APS_NEXT_COMMAND_VALUE         40001
+#define _APS_NEXT_CONTROL_VALUE         1007
+#define _APS_NEXT_SYMED_VALUE           101
+#endif
+#endif

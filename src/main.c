@@ -1,9 +1,12 @@
+#include "resource.h"
+
 #include <mni/mni.h>
 #include <VoicemeeterRemote.h>
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 
+#include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -339,22 +342,62 @@ static BOOL _IsColorLight(DWORD color) {
     return (((5 * g) + (2 * r) + b) > (8 * 128));
 }
 
-static HICON _LoadIcon(MniThemeInfo mti, int dpi, bool mute) {
-    BOOL use_light_icon = TRUE;
-    if (mti.theme == MNI_THEME_LIGHT) {
-         use_light_icon = FALSE;
+static void VMMSI_RefreshIcon(Mni4 *mni, VMMicStatusIndicator *vmmsi) {
+    if (!vmmsi->is_connected) {
+        int wh = MulDiv(16, mni->dpi, 96);
+        HICON ico = (HICON)LoadImageW(
+            GetModuleHandle(NULL),
+            MAKEINTRESOURCE(IDI_PROGRAM_ICON),
+            IMAGE_ICON,
+            wh,
+            wh,
+            LR_DEFAULTSIZE
+        );
+        MniSetIcon(mni, ico, MNI_TRUE);
     } else {
-        if (mti.theme == MNI_THEME_HIGHCONTRAST && !_IsColorLight(mti.text_color)) {
-            use_light_icon = FALSE;
+        BOOL use_light_icon = TRUE;
+        if (mni->system_theme.theme == MNI_THEME_LIGHT) {
+             use_light_icon = FALSE;
+        } else {
+            if (mni->system_theme.theme == MNI_THEME_HIGHCONTRAST && !_IsColorLight(mni->system_theme.text_color)) {
+                use_light_icon = FALSE;
+            }
         }
+
+        int id = 0;
+        if (use_light_icon) {
+            id = vmmsi->mic_state ? IDI_DEFAULT_LIGHT_MIC_MUTED: IDI_DEFAULT_LIGHT_MIC_UNMUTED;
+        } else {
+            id = vmmsi->mic_state ? IDI_DEFAULT_DARK_MIC_MUTED: IDI_DEFAULT_DARK_MIC_UNMUTED;
+        }
+
+        int wh = MulDiv(16, mni->dpi, 96);
+        HICON ico = (HICON)LoadImageW(
+            GetModuleHandle(NULL),
+            MAKEINTRESOURCE(id),
+            IMAGE_ICON,
+            wh,
+            wh,
+            LR_DEFAULTSIZE
+        );
+
+        MniSetIcon(mni, ico, MNI_TRUE);
     }
+}
 
-    const wchar_t *path = use_light_icon 
-        ? (mute ? L"icons/mic_muted_light.ico" : L"icons/mic_unmuted_light.ico")
-        : (mute ? L"icons/mic_muted_dark.ico" : L"icons/mic_unmuted_dark.ico");
-    const int size = MulDiv(16, dpi, 96);
-
-    return (HICON)LoadImageW(0, path, IMAGE_ICON, size, size, LR_LOADFROMFILE);// | LR_DEFAULTSIZE);
+static void VMMSI_RefreshTip(Mni4 *mni, VMMicStatusIndicator *vmmsi) {
+    if (!vmmsi->is_connected) {
+        MniSetTip(mni, L"Voicemeeter Mic Status Indicator - Not Connected");
+    } else {
+        wchar_t buf[32];
+        memset(buf, 0, sizeof(buf));
+        swprintf_s(
+            buf,
+            ARRAYSIZE(buf),
+            L"Mic #%d - %s", vmmsi->stripe_id, vmmsi->mic_state ? L"Muted" : L"Unmuted"
+        );
+        MniSetTip(mni, buf);
+    }
 }
 
 void VMMSI_OnInit(Mni4 *mni) {
@@ -366,10 +409,8 @@ void VMMSI_OnInit(Mni4 *mni) {
     memset(vmmsi->stripe_str, 0, sizeof(vmmsi->stripe_str));
     sprintf_s(vmmsi->stripe_str, ARRAYSIZE(vmmsi->stripe_str), "Stripe[%d].Mute", vmmsi->stripe_id);
     
-    HICON ico = _LoadIcon(mni->system_theme, mni->dpi, MNI_FALSE);
-    MniSetIcon(mni, ico, MNI_FALSE);
-
-    MniSetTip(mni, L"Voicemeeter Mic Status Indicator");
+    VMMSI_RefreshIcon(mni, vmmsi);
+    VMMSI_RefreshTip(mni, vmmsi);
 }
 
 void VMMSI_OnRelease(Mni4 *mni) {
@@ -396,8 +437,7 @@ void VMMSI_OnDpiChange(Mni4 *mni, int dpi) {
         return;
     }
 
-    HICON ico = _LoadIcon(mni->system_theme, dpi, vmmsi->mic_state);
-    MniSetIcon(mni, ico, MNI_TRUE);
+    VMMSI_RefreshIcon(mni, vmmsi);
 }
 
 void VMMSI_OnSystemThemeChange(Mni4 *mni, MniThemeInfo mti) {
@@ -406,8 +446,7 @@ void VMMSI_OnSystemThemeChange(Mni4 *mni, MniThemeInfo mti) {
         return;
     }
 
-    HICON ico = _LoadIcon(mti, mni->dpi, vmmsi->mic_state);
-    MniSetIcon(mni, ico, TRUE);
+    VMMSI_RefreshIcon(mni, vmmsi);
 }
 
 void VMMSI_OnTimer(Mni4 *mni, unsigned int timer_id) {
@@ -426,17 +465,8 @@ void VMMSI_OnTimer(Mni4 *mni, unsigned int timer_id) {
         iVMR.VBVMR_GetParameterFloat(vmmsi->stripe_str, &fmute);
         vmmsi->mic_state = (fmute != 0.0f) ? 1 : 0;
         
-        HICON ico = _LoadIcon(mni->system_theme, mni->dpi, vmmsi->mic_state);
-        MniSetIcon(mni, ico, TRUE);
-
-        wchar_t buf[32];
-        memset(buf, 0, sizeof(buf));
-        swprintf_s(
-            buf,
-            ARRAYSIZE(buf),
-            L"Mic #%d - %s", vmmsi->stripe_id, vmmsi->mic_state ? L"Muted" : L"Unmuted"
-        );
-        MniSetTip(mni, buf);
+        VMMSI_RefreshIcon(mni, vmmsi);
+        VMMSI_RefreshTip(mni, vmmsi);
     }
 }
 
