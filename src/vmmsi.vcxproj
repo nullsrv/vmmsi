@@ -100,6 +100,9 @@
       <AdditionalLibraryDirectories>$(SolutionDir)deps\mni\lib\msvc\$(PlatformShortName)\$(Configuration)\</AdditionalLibraryDirectories>
       <AdditionalDependencies>mni4.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <Manifest>
+      <AdditionalManifestFiles>$(SolutionDir)src\vmmsi.manifest</AdditionalManifestFiles>
+    </Manifest>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
@@ -117,6 +120,9 @@
       <AdditionalLibraryDirectories>$(SolutionDir)deps\mni\lib\msvc\$(PlatformShortName)\$(Configuration)\</AdditionalLibraryDirectories>
       <AdditionalDependencies>mni4.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <Manifest>
+      <AdditionalManifestFiles>$(SolutionDir)src\vmmsi.manifest</AdditionalManifestFiles>
+    </Manifest>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -132,6 +138,9 @@
       <AdditionalLibraryDirectories>$(SolutionDir)deps\mni\lib\msvc\$(PlatformShortName)\$(Configuration)\</AdditionalLibraryDirectories>
       <AdditionalDependencies>mni4.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <Manifest>
+      <AdditionalManifestFiles>$(SolutionDir)src\vmmsi.manifest</AdditionalManifestFiles>
+    </Manifest>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -149,6 +158,9 @@
       <AdditionalLibraryDirectories>$(SolutionDir)deps\mni\lib\msvc\$(PlatformShortName)\$(Configuration)\</AdditionalLibraryDirectories>
       <AdditionalDependencies>mni4.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <Manifest>
+      <AdditionalManifestFiles>$(SolutionDir)src\vmmsi.manifest</AdditionalManifestFiles>
+    </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.c" />
