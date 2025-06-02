@@ -323,27 +323,32 @@ BOOL VMR_End(HWND hWnd) {
 #define VMMSI_TIMER_REFRESH_VOICEMEETER_STATE       MNI_USER_TIMER_ID
 #define VMMSI_TIMER_REFRESH_VOICEMEETER_INTERVAL    50
 
-enum {
-    VMMSI_MIC_STATE_UNMUTED = 0,
-    VMMSI_MIC_STATE_MUTED   = 1,
-    VMMSI_MIC_STATE_ACTIVE  = 2,
-};
+typedef enum MicState {
+    VMMSI_MIC_STATE_UNMUTED     = 0,
+    VMMSI_MIC_STATE_MUTED       = 1,
+    VMMSI_MIC_STATE_ACTIVE      = 2,
+} MicState;
+
+typedef enum IconTheme {
+    VMMSI_ICON_THEME_DEFAULT    = 0,
+    VMMSI_ICON_THEME_WIN10      = 1,
+    VMMSI_ICON_THEME_WIN11      = 2,
+    VMMSI_ICON_THEME_CUSTOM     = 3,
+} IconTheme;
 
 typedef struct VMMicStatusIndicator {
     int         stripe_id;
-    int         mic_state;
+    MicState    mic_state;
     char        stripe_str[16];
-    bool        is_connected;
-    bool        mute_on_lmb;
     float       active_threshold;
     int         hold_interval;
     int         activated_time;
-    bool        active_mic_checker;
     int         timer;
+    bool        active_mic_checker;
+    bool        is_connected;
+    bool        mute_on_lmb;
     bool        is_custom_icon;
-    HICON       mic_muted;
-    HICON       mic_unmuted;
-    HICON       mic_active;
+    IconTheme   icon_theme;
 } VMMicStatusIndicator;
 
 
@@ -445,6 +450,61 @@ static BOOL _GetExePath(HINSTANCE hInstance, wchar_t *buffer, size_t *len) {
     return status;
 }
 
+static int VMMSI_GetThemeIconId(VMMicStatusIndicator *vmmsi, bool use_light_icon) {
+    int id = -1;
+    if (use_light_icon) {
+        switch (vmmsi->icon_theme) {
+        case VMMSI_ICON_THEME_DEFAULT:
+            switch (vmmsi->mic_state) {
+                case VMMSI_MIC_STATE_UNMUTED:   id = IDI_DEFAULT_LIGHT_MIC_UNMUTED; break;
+                case VMMSI_MIC_STATE_MUTED:     id = IDI_DEFAULT_LIGHT_MIC_MUTED;   break;
+                case VMMSI_MIC_STATE_ACTIVE:    id = IDI_DEFAULT_LIGHT_MIC_ACTIVE;  break;
+            }
+            break;
+        case VMMSI_ICON_THEME_WIN10:
+            switch (vmmsi->mic_state) {
+                case VMMSI_MIC_STATE_UNMUTED:   id = IDI_WIN10_LIGHT_MIC_UNMUTED;   break;
+                case VMMSI_MIC_STATE_MUTED:     id = IDI_WIN10_LIGHT_MIC_MUTED;     break;
+                case VMMSI_MIC_STATE_ACTIVE:    id = IDI_WIN10_LIGHT_MIC_ACTIVE;    break;
+            }
+            break;
+        case VMMSI_ICON_THEME_WIN11:
+            switch (vmmsi->mic_state) {
+                case VMMSI_MIC_STATE_UNMUTED:   id = IDI_WIN11_LIGHT_MIC_UNMUTED;   break;
+                case VMMSI_MIC_STATE_MUTED:     id = IDI_WIN11_LIGHT_MIC_MUTED;     break;
+                case VMMSI_MIC_STATE_ACTIVE:    id = IDI_WIN11_LIGHT_MIC_ACTIVE;    break;
+            }
+            break;
+        }
+    } else {
+        switch (vmmsi->icon_theme) {
+        case VMMSI_ICON_THEME_DEFAULT:
+            switch (vmmsi->mic_state) {
+                case VMMSI_MIC_STATE_UNMUTED:   id = IDI_DEFAULT_DARK_MIC_UNMUTED;  break;
+                case VMMSI_MIC_STATE_MUTED:     id = IDI_DEFAULT_DARK_MIC_MUTED;    break;
+                case VMMSI_MIC_STATE_ACTIVE:    id = IDI_DEFAULT_DARK_MIC_ACTIVE;   break;
+            }
+            break;
+        case VMMSI_ICON_THEME_WIN10:
+            switch (vmmsi->mic_state) {
+                case VMMSI_MIC_STATE_UNMUTED:   id = IDI_WIN10_DARK_MIC_UNMUTED;    break;
+                case VMMSI_MIC_STATE_MUTED:     id = IDI_WIN10_DARK_MIC_MUTED;      break;
+                case VMMSI_MIC_STATE_ACTIVE:    id = IDI_WIN10_DARK_MIC_ACTIVE;     break;
+            }
+            break;
+        case VMMSI_ICON_THEME_WIN11:
+            switch (vmmsi->mic_state) {
+                case VMMSI_MIC_STATE_UNMUTED:   id = IDI_WIN11_DARK_MIC_UNMUTED;    break;
+                case VMMSI_MIC_STATE_MUTED:     id = IDI_WIN11_DARK_MIC_MUTED;      break;
+                case VMMSI_MIC_STATE_ACTIVE:    id = IDI_WIN11_DARK_MIC_ACTIVE;     break;
+            }
+            break;
+        }
+    }
+
+    return id;
+}
+
 static void VMMSI_RefreshIcon(Mni4 *mni, VMMicStatusIndicator *vmmsi) {
     if (!vmmsi->is_connected) {
         int wh = MulDiv(16, mni->dpi, 96);
@@ -456,8 +516,8 @@ static void VMMSI_RefreshIcon(Mni4 *mni, VMMicStatusIndicator *vmmsi) {
             wh,
             LR_DEFAULTCOLOR | LR_SHARED
         );
-        MniSetIcon(mni, ico, vmmsi->is_custom_icon ? MNI_TRUE : MNI_FALSE);
-        vmmsi->is_custom_icon = false;
+
+        MniSetIcon(mni, ico, MNI_FALSE);        
     } else {
         bool use_light_icon = true;
         if (mni->system_theme.theme == MNI_THEME_LIGHT) {
@@ -468,21 +528,7 @@ static void VMMSI_RefreshIcon(Mni4 *mni, VMMicStatusIndicator *vmmsi) {
             }
         }
 
-        int id = 0;
-        if (use_light_icon) {
-            switch (vmmsi->mic_state) {
-                case VMMSI_MIC_STATE_UNMUTED: id = IDI_DEFAULT_LIGHT_MIC_UNMUTED; break;
-                case VMMSI_MIC_STATE_MUTED: id = IDI_DEFAULT_LIGHT_MIC_MUTED; break;
-                case VMMSI_MIC_STATE_ACTIVE: id = IDI_DEFAULT_LIGHT_MIC_ACTIVE; break;
-            }
-        } else {
-            switch (vmmsi->mic_state) {
-                case VMMSI_MIC_STATE_UNMUTED: id = IDI_DEFAULT_DARK_MIC_UNMUTED; break;
-                case VMMSI_MIC_STATE_MUTED: id = IDI_DEFAULT_DARK_MIC_MUTED; break;
-                case VMMSI_MIC_STATE_ACTIVE: id = IDI_DEFAULT_DARK_MIC_ACTIVE; break;
-            }
-        }
-
+        int id = VMMSI_GetThemeIconId(vmmsi, use_light_icon);
         int wh = MulDiv(16, mni->dpi, 96);
         HICON ico = (HICON)LoadImageW(
             GetModuleHandle(NULL),
@@ -523,7 +569,7 @@ void VMMSI_OnInit(Mni4 *mni) {
 
     memset(vmmsi->stripe_str, 0, sizeof(vmmsi->stripe_str));
     sprintf_s(vmmsi->stripe_str, ARRAYSIZE(vmmsi->stripe_str), "Stripe[%d].Mute", vmmsi->stripe_id);
-    
+
     VMMSI_RefreshIcon(mni, vmmsi);
     VMMSI_RefreshTip(mni, vmmsi);
 }
@@ -593,24 +639,24 @@ void VMMSI_OnTimer(Mni4 *mni, unsigned int timer_id) {
         float fmute = 0.0f;
         iVMR.VBVMR_GetParameterFloat(vmmsi->stripe_str, &fmute);
         if (fmute != 0.0f) {
-            vmmsi->mic_state = 1;
+            vmmsi->mic_state = VMMSI_MIC_STATE_MUTED;
         } else {
-            vmmsi->mic_state = 0;
+            vmmsi->mic_state = VMMSI_MIC_STATE_UNMUTED;
         }
     }
     
-    if (vmmsi->active_mic_checker && vmmsi->mic_state != 1) {
+    if (vmmsi->active_mic_checker && vmmsi->mic_state != VMMSI_MIC_STATE_MUTED) {
         float flevel = 0.0f;
         iVMR.VBVMR_GetLevel(1, 0, &flevel);
         float dB = max(-80, min(12, 20.0f * log10f(flevel)));
 
         if (vmmsi->active_threshold < dB) {
-            vmmsi->mic_state = 2;
+            vmmsi->mic_state = VMMSI_MIC_STATE_ACTIVE;
             vmmsi->activated_time = vmmsi->timer;
         } else {
             int delta = vmmsi->timer - vmmsi->activated_time;
             if (delta > vmmsi->hold_interval) {
-                vmmsi->mic_state = 0;
+                vmmsi->mic_state = VMMSI_MIC_STATE_UNMUTED;
             }
         }
     }
@@ -654,7 +700,10 @@ void VMMSI_OnContextMenuClick(Mni4 *mni, int selected_item) {
     
     switch (selected_item) {
         case VMMSI_MENU_MUTE_UNMUTE:
-            iVMR.VBVMR_SetParameterFloat(vmmsi->stripe_str, (vmmsi->mic_state != 0) ? 0.0f : 1.0f);
+            iVMR.VBVMR_SetParameterFloat(
+                vmmsi->stripe_str,
+                (vmmsi->mic_state != VMMSI_MIC_STATE_UNMUTED) ? 0.0f : 1.0f
+            );
             break;
         case VMMSI_MENU_ABOUT:
             break;
@@ -673,19 +722,32 @@ int WINAPI wWinMain(
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
     UNREFERENCED_PARAMETER(nShowCmd);
-    
-    wchar_t buf[1024];
-    size_t len = ARRAYSIZE(buf);
-    _GetExePath(NULL, buf, &len);
-    _RemoveNameInPath(buf);
+
+    int stripe_id = 0;
+    if (lpCmdLine) {
+        switch (lpCmdLine[0]) {
+        case L'0': stripe_id = 0; break;
+        case L'1': stripe_id = 1; break;
+        case L'2': stripe_id = 2; break;
+        case L'3': stripe_id = 3; break;
+        case L'4': stripe_id = 4; break;
+        case L'5': stripe_id = 5; break;
+        case L'6': stripe_id = 6; break;
+        case L'7': stripe_id = 7; break;
+        case L'8': stripe_id = 8; break;
+        case L'9': stripe_id = 9; break;
+        }
+    }
 
     VMMicStatusIndicator vmmsi;
     memset(&vmmsi, 0, sizeof(vmmsi));
 
+    vmmsi.stripe_id = stripe_id;
     vmmsi.active_mic_checker = true;
     vmmsi.active_threshold = -36.0f;
     vmmsi.hold_interval = 150;
     vmmsi.mute_on_lmb = true;
+    vmmsi.icon_theme = VMMSI_ICON_THEME_DEFAULT;
 
     // Setup MniInfo.
     MniInfo info;
